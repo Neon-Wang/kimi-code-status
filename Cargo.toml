@@ -19,8 +19,23 @@ serde_json = "1.0"
 
 # macOS native bindings
 objc2 = "0.6"
-objc2-foundation = "0.3"
-objc2-app-kit = "0.3"
+objc2-foundation = { version = "0.3", features = ["NSData", "NSArray", "NSObject", "NSString"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSAlert",
+    "NSApplication",
+    "NSButton",
+    "NSControl",
+    "NSFont",
+    "NSImage",
+    "NSMenu",
+    "NSMenuItem",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSTextField",
+    "NSView",
+    "NSWorkspace",
+] }
 
 # Keychain access
 security-framework = "3"
