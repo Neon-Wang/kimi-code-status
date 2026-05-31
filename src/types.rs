@@ -57,6 +57,8 @@ pub struct ToolInfo {
     pub tool_type: ToolType,
     pub installed: bool,
     pub install_path: Option<String>,
+    /// How to launch: "Cursor", "Visual Studio Code", etc. Passed to `open -a`.
+    pub launch_as: Option<String>,
 }
 
 // ── Config types ──
