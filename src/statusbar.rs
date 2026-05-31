@@ -164,32 +164,34 @@ extern "C" fn open_tool_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObjec
 }
 
 /// CLI tool: pick folder, then launch Ghostty cd'd into it with the CLI command.
-/// Called from menu action (main thread). Shows NSOpenPanel synchronously.
 extern "C" fn open_cli_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObject) {
     if sender.is_null() { return; }
     let obj: *mut AnyObject = unsafe { objc2::msg_send![sender, representedObject] };
     if obj.is_null() { return; }
     let cmd = unsafe { (*(obj as *const NSString)).to_string() };
 
-    // Run NSOpenPanel synchronously (we're already on main thread from menu action)
     if let Some(dir) = pick_folder() {
-        if std::path::Path::new("/Applications/Ghostty.app").exists() {
-            let safe_dir = dir.replace('\'', "'\\''");
-            let script = format!("cd '{}' && {}", safe_dir, cmd);
-            let _ = std::process::Command::new("open")
-                .arg("-a").arg("Ghostty")
-                .arg("--args").arg("-e").arg("/bin/zsh").arg("-c").arg(&script)
+        let safe_dir = dir.replace('\'', "'\\''");
+        let script = format!("cd '{}' && {}", safe_dir, cmd);
+        let ghostty_bin = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
+
+        if std::path::Path::new(ghostty_bin).exists() {
+            // Direct Ghostty binary — spawns a new window
+            let _ = std::process::Command::new(ghostty_bin)
+                .arg("-e").arg("/bin/zsh")
+                .arg("-c").arg(&script)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
         } else {
-            let script = format!(
+            // Fallback: Terminal.app via AppleScript
+            let osa = format!(
                 "tell application \"Terminal\" to do script \"cd '{}' && {}\"",
                 dir.replace('\'', "'\\''"),
                 cmd
             );
             let _ = std::process::Command::new("osascript")
-                .arg("-e").arg(&script)
+                .arg("-e").arg(&osa)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
