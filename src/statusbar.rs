@@ -95,6 +95,21 @@ fn get_or_load_icon(cache: &mut std::collections::HashMap<String, Retained<NSIma
     None
 }
 
+/// Load Kimi.app or Codex.app icon (whichever is found) for the menu bar button.
+fn load_kimi_or_codex_icon() -> Option<Retained<NSImage>> {
+    // Try Kimi first, then Codex
+    for candidate in &[
+        "/Applications/Kimi.app",
+        "/Applications/KimiCode.app",
+        "/Applications/Codex.app",
+    ] {
+        if std::path::Path::new(candidate).exists() {
+            return load_app_icon(candidate);
+        }
+    }
+    None
+}
+
 // ── Raw ObjC delegate class ──
 
 fn make_delegate() -> Retained<AnyObject> {
@@ -107,6 +122,8 @@ fn make_delegate() -> Retained<AnyObject> {
             if cls.is_null() { panic!("objc_allocateClassPair failed"); }
             let s = sel!(openTool:);
             class_addMethod(cls, s, open_tool_impl as *mut c_void, c"v@:@".as_ptr());
+            let s = sel!(openCli:);
+            class_addMethod(cls, s, open_cli_impl as *mut c_void, c"v@:@".as_ptr());
             let s = sel!(refreshNow:);
             class_addMethod(cls, s, refresh_now_impl as *mut c_void, c"v@:@".as_ptr());
             let s = sel!(setKimiKey:);
@@ -146,6 +163,70 @@ extern "C" fn open_tool_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObjec
     });
 }
 
+/// CLI tool: pick folder, then launch Ghostty cd'd into it with the CLI command.
+/// Called from menu action (main thread). Shows NSOpenPanel synchronously.
+extern "C" fn open_cli_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObject) {
+    if sender.is_null() { return; }
+    let obj: *mut AnyObject = unsafe { objc2::msg_send![sender, representedObject] };
+    if obj.is_null() { return; }
+    let cmd = unsafe { (*(obj as *const NSString)).to_string() };
+
+    // Run NSOpenPanel synchronously (we're already on main thread from menu action)
+    if let Some(dir) = pick_folder() {
+        if std::path::Path::new("/Applications/Ghostty.app").exists() {
+            let safe_dir = dir.replace('\'', "'\\''");
+            let script = format!("cd '{}' && {}", safe_dir, cmd);
+            let _ = std::process::Command::new("open")
+                .arg("-a").arg("Ghostty")
+                .arg("--args").arg("-e").arg("/bin/zsh").arg("-c").arg(&script)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        } else {
+            let script = format!(
+                "tell application \"Terminal\" to do script \"cd '{}' && {}\"",
+                dir.replace('\'', "'\\''"),
+                cmd
+            );
+            let _ = std::process::Command::new("osascript")
+                .arg("-e").arg(&script)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+}
+
+/// Show NSOpenPanel to pick a directory. Returns the selected path.
+fn pick_folder() -> Option<String> {
+    unsafe {
+        let cls: *mut AnyObject = AnyClass::get(c"NSOpenPanel").unwrap() as *const _ as *mut _;
+        let panel: *mut AnyObject = objc2::msg_send![cls, openPanel];
+        let _: () = objc2::msg_send![panel, setCanChooseFiles: false];
+        let _: () = objc2::msg_send![panel, setCanChooseDirectories: true];
+        let _: () = objc2::msg_send![panel, setCanCreateDirectories: false];
+        let _: () = objc2::msg_send![panel, setAllowsMultipleSelection: false];
+        let _: () = objc2::msg_send![panel, setTitle: &*NSString::from_str("Choose project folder")];
+        let _: () = objc2::msg_send![panel, setMessage: &*NSString::from_str("Select a folder to open in terminal with this CLI tool")];
+        let response: isize = objc2::msg_send![panel, runModal];
+        if response == 1 {
+            // NSModalResponseOK = 1
+            let urls: *mut AnyObject = objc2::msg_send![panel, URLs];
+            let count: usize = objc2::msg_send![urls, count];
+            if count > 0 {
+                let url: *mut AnyObject = objc2::msg_send![urls, objectAtIndex: 0];
+                if !url.is_null() {
+                    let path: *mut AnyObject = objc2::msg_send![url, path];
+                    if !path.is_null() {
+                        return Some((*(path as *const NSString)).to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 extern "C" fn refresh_now_impl(_this: &AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
     show_alert_str("Refresh", "Auto-refresh runs every 5 minutes. Data updates automatically.");
 }
@@ -182,6 +263,14 @@ impl StatusBarApp {
         // Set icon + text in menu bar
         if let Some(button) = status_item.button(mtm) {
             unsafe {
+                // Load the Kimi/Codex .app icon for the menu bar button
+                let icon = load_kimi_or_codex_icon();
+                if let Some(ref icon) = icon {
+                    let _: () = objc2::msg_send![&*button, setImage: &**icon as *const NSImage as *mut AnyObject];
+                    // NSImageLeft = 3
+                    let _: () = objc2::msg_send![&*button, setImagePosition: 3_usize];
+                }
+
                 let text = Self::bar_text(vm);
                 let _: () = objc2::msg_send![&*button, setTitle: &*NSString::from_str(&text)];
                 let _: () = objc2::msg_send![&*button, setToolTip: &*NSString::from_str("AI Coding Dashboard")];
@@ -206,6 +295,11 @@ impl StatusBarApp {
         let mtm = MainThreadMarker::new().expect("main thread");
         if let Some(button) = self.status_item.button(mtm) {
             unsafe {
+                // Rotate icon based on most recent refresh
+                let icon = load_kimi_or_codex_icon();
+                if let Some(ref icon) = icon {
+                    let _: () = objc2::msg_send![&*button, setImage: &**icon as *const NSImage as *mut AnyObject];
+                }
                 let text = Self::bar_text(vm);
                 let _: () = objc2::msg_send![&*button, setTitle: &*NSString::from_str(&text)];
             }
@@ -277,13 +371,29 @@ impl StatusBarApp {
         }
         Self::sep(&menu, mtm);
 
-        // ── Harness Tools (with app icons!) ──
-        for tool in &vm.tools {
-            if tool.installed {
+        // ── IDEs ──
+        let ides: Vec<_> = vm.tools.iter().filter(|t| t.tool_type == crate::types::ToolType::IDE).collect();
+        if !ides.is_empty() {
+            Self::dlbl(&menu, mtm, "IDE & Apps");
+            for tool in &ides {
                 let launch_name = tool.launch_as.as_deref().unwrap_or(&tool.name);
-                Self::tool_item(&menu, mtm, &tool.name, launch_name, sel!(openTool:), del_ptr);
-            } else {
-                Self::dlbl(&menu, mtm, &format!("  \u{2717} {}", tool.name));
+                Self::tool_item(&menu, mtm, launch_name, launch_name, sel!(openTool:), del_ptr);
+            }
+            Self::sep(&menu, mtm);
+        }
+
+        // ── CLI Tools ──
+        let clis: Vec<_> = vm.tools.iter().filter(|t| t.tool_type == crate::types::ToolType::CLI).collect();
+        if !clis.is_empty() {
+            Self::dlbl(&menu, mtm, "CLI Tools (pick folder → Ghostty)");
+            for tool in &clis {
+                let bin = tool.install_path.as_deref().unwrap_or(&tool.name);
+                let cmd = if tool.name.contains(' ') {
+                    format!("\"{}\"", bin)
+                } else {
+                    bin.to_string()
+                };
+                Self::cli_tool_item(&menu, mtm, &tool.name, &cmd, sel!(openCli:), del_ptr);
             }
         }
         Self::sep(&menu, mtm);
@@ -320,6 +430,22 @@ impl StatusBarApp {
         } else {
             Self::dlbl(menu, mtm, &format!("  {}  Loading...", name));
         }
+    }
+
+    /// CLI tool menu item — click picks folder then opens in Ghostty.
+    fn cli_tool_item(menu: &NSMenu, mtm: MainThreadMarker, name: &str, cmd: &str, action: Sel, target: *mut AnyObject) {
+        let label = format!("    {}", name);
+        let item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &NSString::from_str(&label), Some(action), &NSString::from_str(""))
+        };
+        item.setEnabled(true);
+        unsafe {
+            let _: () = objc2::msg_send![&*item as *const NSMenuItem as *mut AnyObject, setTarget: target];
+            // representedObject stores the CLI command to run
+            let ns = NSString::from_str(cmd);
+            let _: () = objc2::msg_send![&*item as *const NSMenuItem as *mut AnyObject, setRepresentedObject: &*ns];
+        }
+        menu.addItem(&item);
     }
 
     /// Menu item with the tool's .app icon loaded from /Applications.
