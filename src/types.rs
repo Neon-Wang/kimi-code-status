@@ -44,7 +44,9 @@ impl ServiceQuota {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolType {
+    #[allow(clippy::upper_case_acronyms)]
     CLI,
+    #[allow(clippy::upper_case_acronyms)]
     IDE,
 }
 

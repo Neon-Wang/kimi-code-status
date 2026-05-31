@@ -135,7 +135,7 @@ fn parse_codex_json(content: &str) -> Option<CodexCredentials> {
     }
 
     // Check if token might be stale (last refresh > 8 days ago)
-    let is_stale = auth.last_refresh.as_ref().map_or(false, |last_refresh| {
+    let is_stale = auth.last_refresh.as_ref().is_some_and(|last_refresh| {
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(last_refresh) {
             let now_secs = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
