@@ -1,5 +1,5 @@
 use crate::formatter;
-use crate::types::{ServiceQuota, ToolInfo};
+use crate::types::{QuotaTier, ServiceQuota, ToolInfo};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -81,9 +81,9 @@ impl StatusBarApp {
         for q in [&vm.kimi_quota, &vm.codex_quota] {
             match q {
                 Some(q) if q.success => {
-                    let emoji = formatter::status_emoji(&q.tiers);
-                    let max_pct = q.tiers.iter().map(|t| t.utilization).fold(0.0f64, f64::max);
-                    parts.push(format!("{emoji}{:.0}%", max_pct));
+                    if let Some(s) = formatter::format_summary(&q.tiers) {
+                        parts.push(s);
+                    }
                 }
                 Some(q) if !q.credential_valid && q.service == "kimi" => {
                     parts.push("\u{26A0} Set Key".into());
@@ -91,7 +91,7 @@ impl StatusBarApp {
                 _ => {}
             }
         }
-        if parts.is_empty() { "\u{26AA} KCode".into() } else { parts.join(" ") }
+        if parts.is_empty() { "\u{26AA} KCode".into() } else { parts.join("  ") }
     }
 
     fn build_menu(mtm: MainThreadMarker, vm: &AppViewModel) -> Retained<NSMenu> {
@@ -99,8 +99,8 @@ impl StatusBarApp {
 
         // ── Usage ──
         Self::dlbl(&menu, mtm, "Usage");
-        Self::dlbl(&menu, mtm, &format!("  Kimi Code  {}", Self::qdetail(vm.kimi_quota.as_ref())));
-        Self::dlbl(&menu, mtm, &format!("  Codex       {}", Self::qdetail(vm.codex_quota.as_ref())));
+        Self::service_lines(&menu, mtm, "Kimi Code", &vm.kimi_quota);
+        Self::service_lines(&menu, mtm, "Codex", &vm.codex_quota);
         Self::dlbl(&menu, mtm, &Self::fmt_updated(vm));
         Self::sep(&menu, mtm);
 
@@ -129,7 +129,61 @@ impl StatusBarApp {
         menu
     }
 
-    fn qdetail(q: Option<&ServiceQuota>) -> String {
+    /// Add per-tier lines for a service to the menu.
+    fn service_lines(menu: &NSMenu, mtm: MainThreadMarker, name: &str, q: &Option<ServiceQuota>) {
+        match q {
+            Some(q) if q.success && !q.tiers.is_empty() => {
+                let emoji = formatter::status_emoji(&q.tiers);
+                for t in &q.tiers {
+                    let label = match t.name.as_str() {
+                        "five_hour" => "5-Hour",
+                        "weekly_limit" | "seven_day" => "7-Day",
+                        _ => &t.name,
+                    };
+                    let pct = format!("{:.0}%", t.utilization);
+                    let countdown = Self::tier_countdown(t);
+                    let line = if countdown.is_empty() {
+                        format!("    {label}: {pct}")
+                    } else {
+                        format!("    {label}: {pct}  (resets {countdown})")
+                    };
+                    Self::dlbl(menu, mtm, &line);
+                }
+                Self::dlbl(menu, mtm, &format!("  {emoji} {} tiers", name));
+            }
+            Some(_) => {
+                Self::dlbl(menu, mtm, &format!("  {}", Self::qdetail_one(q.as_ref())));
+            }
+            None => {
+                Self::dlbl(menu, mtm, &format!("  {}  \u{26AA} Loading...", name));
+            }
+        }
+    }
+
+    /// Countdown string for a single tier.
+    fn tier_countdown(t: &QuotaTier) -> String {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        if let Some(ref reset) = t.resets_at {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset) {
+                let remain = dt.timestamp() - now;
+                if remain <= 0 {
+                    "now".into()
+                } else if remain < 3600 {
+                    format!("{}m", remain / 60)
+                } else if remain < 86400 {
+                    format!("{}h{}m", remain / 3600, (remain % 3600) / 60)
+                } else {
+                    format!("{}d{}h", remain / 86400, (remain % 86400) / 3600)
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    }
+
+    fn qdetail_one(q: Option<&ServiceQuota>) -> String {
         match q {
             Some(q) if q.success => formatter::format_summary(&q.tiers).unwrap_or("No data".into()),
             Some(q) if !q.credential_valid => format!("\u{26A0} {}", q.error.as_deref().unwrap_or("Not configured")),
