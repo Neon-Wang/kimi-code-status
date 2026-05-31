@@ -158,16 +158,14 @@ extern "C" fn open_tool_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObjec
     if obj.is_null() { return; }
     let name = unsafe { (*(obj as *const NSString)).to_string() };
     std::thread::spawn(move || {
-        // open -na = new instance (force new window even if app is already running)
+        // open -a without -n: activates existing instance, no Dock duplicates
         let _ = std::process::Command::new("open")
-            .arg("-na").arg(&name)
+            .arg("-a").arg(&name)
             .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
     });
 }
 
-/// CLI tool: pick folder → Terminal.app new window with cd + command.
-/// Uses AppleScript `tell Terminal do script ...` — 100% reliable, always works.
-/// CLI tool: pick folder → Ghostty/Terminal new window with cd + command.
+/// CLI tool: pick folder → Ghostty new window (reuses existing instance) or Terminal fallback.
 extern "C" fn open_cli_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObject) {
     if sender.is_null() { return; }
     let obj: *mut AnyObject = unsafe { objc2::msg_send![sender, representedObject] };
@@ -179,27 +177,23 @@ extern "C" fn open_cli_impl(_this: &AnyObject, _cmd: Sel, sender: *mut AnyObject
         let esc_cmd = cmd.replace('\'', "'\\''");
         let shell_cmd = format!("cd '{}' && {}", esc_dir, esc_cmd);
 
-        let ghostty_bin = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
-        if std::path::Path::new(ghostty_bin).exists() {
-            // Ghostty native: `ghostty -e /bin/zsh -c "cd ... && ..."`
-            // Opens a new window and runs the shell command inside it.
-            let result = std::process::Command::new(ghostty_bin)
-                .args(["-e", "/bin/zsh", "-c", &shell_cmd])
+        let ghostty_app = "/Applications/Ghostty.app";
+        if std::path::Path::new(ghostty_app).exists() {
+            // open -a Ghostty --args -e ... → reuses existing Ghostty, opens new window
+            let _ = std::process::Command::new("open")
+                .arg("-a").arg("Ghostty")
+                .arg("--args").arg("-e").arg("/bin/zsh").arg("-c").arg(&shell_cmd)
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
                 .spawn();
-            if result.is_ok() { return; }
+            return;
         }
 
-        // Fallback: Terminal.app via AppleScript (always works)
-        let script = format!(
-            "tell application \"Terminal\" to do script \"{}\"",
-            shell_cmd
-        );
+        // Fallback: Terminal.app via AppleScript
+        let script = format!("tell application \"Terminal\" to do script \"{}\"", shell_cmd);
         let _ = std::process::Command::new("osascript")
             .arg("-e").arg(&script)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
             .spawn();
     }
 }
