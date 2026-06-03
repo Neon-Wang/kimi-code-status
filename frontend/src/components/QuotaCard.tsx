@@ -62,7 +62,9 @@ export function QuotaCard({ title, iconSrc, quota, estimates, proxy }: QuotaCard
               <div className="tier-meta">
                 <span className="tier-label">
                   <span>{tierLabels[tier.name] ?? tier.name}</span>
-                  {tier.resetsAt && <small>（{formatResetTime(tier.resetsAt)} 重置）</small>}
+                  {tier.resetsAt && (
+                    <small>（{formatResetLabel(tier.name, tier.resetsAt)}）</small>
+                  )}
                 </span>
                 <strong>{Math.round(tier.utilization)}%</strong>
               </div>
@@ -154,4 +156,22 @@ function formatResetTime(value: string): string {
   const hour = `${date.getHours()}`.padStart(2, "0");
   const minute = `${date.getMinutes()}`.padStart(2, "0");
   return `${month}月${day}日 ${hour}:${minute}`;
+}
+
+function formatResetLabel(tierName: string, value: string): string {
+  if (tierName === "five_hour") {
+    return `${formatResetCountdown(value)}后重置`;
+  }
+  return `${formatResetTime(value)} 重置`;
+}
+
+function formatResetCountdown(value: string): string {
+  const resetAt = new Date(value).getTime();
+  if (Number.isNaN(resetAt)) return "未知时间";
+  const seconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.ceil((seconds % 3600) / 60);
+  if (hours > 0 && minutes > 0) return `${hours} 小时 ${minutes} 分钟`;
+  if (hours > 0) return `${hours} 小时`;
+  return `${minutes} 分钟`;
 }

@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import type { DashboardState } from "../types";
 
 const invokeMock = vi.fn();
+const fixedNow = new Date("2026-06-04T08:15:00+08:00").getTime();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => invokeMock(command, args),
@@ -114,6 +115,7 @@ const dashboardState: DashboardState = {
 
 describe("App", () => {
   beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(fixedNow);
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
       if (command === "get_dashboard_state") return Promise.resolve(dashboardState);
@@ -123,13 +125,17 @@ describe("App", () => {
     });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders Kimi and Codex quota cards", async () => {
     render(<App />);
 
     expect(await screen.findByText("Kimi Code")).toBeInTheDocument();
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("不够")).toBeInTheDocument();
-    expect(screen.getByText(/06月04日 .* 重置/)).toBeInTheDocument();
+    expect(screen.getByText("（2 小时 15 分钟后重置）")).toBeInTheDocument();
     expect(screen.getByText(/06月07日 .* 重置/)).toBeInTheDocument();
     expect(screen.getByText("Kimi 当前直连")).toBeInTheDocument();
     expect(screen.getByText("Codex 代理已连接")).toBeInTheDocument();
