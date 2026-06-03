@@ -1,56 +1,26 @@
-use crate::config;
-use crate::providers::{codex::CodexProvider, kimi::KimiProvider, UsageProvider};
-use crate::statusbar::{AppViewModel, StatusBarApp};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::AppHandle;
 
 const REFRESH_INTERVAL_SECS: u64 = 300; // 5 minutes
 
-/// Run the scheduler loop on a background tokio runtime.
-/// Sends updates to the main thread via dispatch.
-pub async fn run(app: Arc<StatusBarApp>, vm: Arc<Mutex<AppViewModel>>) {
-    let config = config::load_config();
-    let kimi_enabled = config.selected_services.contains(&"kimi".to_string());
-    let codex_enabled = config.selected_services.contains(&"codex".to_string());
-
-    // Initial query
-    refresh_all(kimi_enabled, codex_enabled, &app, &vm).await;
-
-    // Periodic refresh
-    let mut interval = tokio::time::interval(Duration::from_secs(REFRESH_INTERVAL_SECS));
+pub async fn run(app: AppHandle, state: crate::commands::SharedRuntimeState) {
     loop {
-        interval.tick().await;
-        log::info!("Scheduler tick — refreshing usage data");
-        let config = config::load_config();
-        let kimi_enabled = config.selected_services.contains(&"kimi".to_string());
-        let codex_enabled = config.selected_services.contains(&"codex".to_string());
-        refresh_all(kimi_enabled, codex_enabled, &app, &vm).await;
+        tokio::time::sleep(Duration::from_secs(REFRESH_INTERVAL_SECS)).await;
+        if let Err(error) = refresh_and_publish(&app, &state).await {
+            log::warn!("Scheduled usage refresh failed: {error}");
+        }
     }
 }
 
-async fn refresh_all(
-    kimi_enabled: bool,
-    codex_enabled: bool,
-    app: &Arc<StatusBarApp>,
-    vm: &Arc<Mutex<AppViewModel>>,
-) {
-    // Query Kimi
-    if kimi_enabled {
-        let kimi = KimiProvider::new();
-        let quota = kimi.query().await;
-        let mut vm = vm.lock().unwrap();
-        vm.kimi_quota = Some(quota);
-        vm.last_refreshed_service = Some("kimi".into());
-    }
-
-    // Query Codex
-    if codex_enabled {
-        let codex = CodexProvider::new();
-        let quota = codex.query().await;
-        let mut vm = vm.lock().unwrap();
-        vm.codex_quota = Some(quota);
-        vm.last_refreshed_service = Some("codex".into());
-    }
-
-    StatusBarApp::schedule_update(app, vm);
+async fn refresh_and_publish(
+    app: &AppHandle,
+    state: &crate::commands::SharedRuntimeState,
+) -> Result<(), String> {
+    log::info!("Scheduled usage refresh started");
+    crate::commands::refresh_usage_inner(state).await?;
+    let dashboard = crate::commands::dashboard_state(state)?;
+    crate::tray::update_tray(app, &dashboard)?;
+    crate::commands::emit_dashboard_update(app, &dashboard);
+    log::info!("Scheduled usage refresh completed");
+    Ok(())
 }

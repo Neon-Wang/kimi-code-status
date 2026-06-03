@@ -9,6 +9,7 @@ mod keychain;
 mod launcher;
 mod providers;
 mod proxy;
+mod scheduler;
 mod tray;
 mod types;
 mod vault;
@@ -58,6 +59,9 @@ pub fn run() {
                     commands::emit_dashboard_update(&handle, &dashboard);
                 }
             });
+            let handle = app.handle().clone();
+            let state = app.state::<SharedRuntimeState>().inner().clone();
+            tauri::async_runtime::spawn(scheduler::run(handle, state));
             Ok(())
         })
         .run(tauri::generate_context!())
