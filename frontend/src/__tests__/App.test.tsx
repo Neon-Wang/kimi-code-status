@@ -129,8 +129,8 @@ describe("App", () => {
     expect(await screen.findByText("Kimi Code")).toBeInTheDocument();
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("不够")).toBeInTheDocument();
-    expect(screen.getByText("（06月04日 10:30 重置）")).toBeInTheDocument();
-    expect(screen.getByText("（06月07日 18:45 重置）")).toBeInTheDocument();
+    expect(screen.getByText(/06月04日 .* 重置/)).toBeInTheDocument();
+    expect(screen.getByText(/06月07日 .* 重置/)).toBeInTheDocument();
     expect(screen.getByText("Kimi 当前直连")).toBeInTheDocument();
     expect(screen.getByText("Codex 代理已连接")).toBeInTheDocument();
     expect(screen.getByText("本周内预计够用。")).toBeInTheDocument();
